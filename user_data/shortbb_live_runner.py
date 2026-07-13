@@ -12,6 +12,27 @@ from pathlib import Path
 import pandas as pd
 import requests, hmac, hashlib
 from urllib.parse import urlencode
+import datetime
+
+# 北京时间 (UTC+8) —— 所有面向用户的时间统一用北京时间，避免与币安 UTC 对不上
+BJ = datetime.timezone(datetime.timedelta(hours=8))
+
+
+def bj_now(sec=False):
+    """当前北京时间字符串。"""
+    fmt = "%Y-%m-%d %H:%M:%S" if sec else "%Y-%m-%d %H:%M"
+    return datetime.datetime.now(BJ).strftime(fmt)
+
+
+def bj_ms(ms):
+    """币安 epoch 毫秒 -> 北京时间字符串；无效返回空串。"""
+    try:
+        ms = int(ms)
+    except (TypeError, ValueError):
+        return ""
+    if not ms:
+        return ""
+    return datetime.datetime.fromtimestamp(ms / 1000, BJ).strftime("%Y-%m-%d %H:%M")
 
 # 让执行器能 import 同一份 ShortBB.py
 sys.path.insert(0, "/freqtrade/user_data/strategies")
@@ -29,6 +50,8 @@ FORCE = "--once" in sys.argv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
                     handlers=[logging.FileHandler(LOG), logging.StreamHandler()])
+# 日志时间戳也统一用北京时间，便于排查
+logging.Formatter.converter = lambda *args: datetime.datetime.now(BJ).timetuple()
 log = logging.getLogger("shortbb-live")
 
 KEY = os.environ["BINANCE_TESTNET_API_KEY"]
@@ -161,6 +184,23 @@ def qty_for(symbol, price, filt):
     return qty
 
 
+def fetch_entry_time(symbol, amt):
+    """从币安真实成交记录取当前持仓的开仓时间（北京时间）。
+
+    多仓由买入开仓、空仓由卖出开仓，取最近一笔同方向成交的时间。
+    取不到（网络/权限）时返回 None，由调用方兜底。
+    """
+    try:
+        trades = api("GET", "/fapi/v1/userTrades", {"symbol": symbol, "limit": 50}, signed=True)
+        side = "BUY" if amt > 0 else "SELL"
+        for t in reversed(trades):
+            if t.get("side") == side:
+                return bj_ms(t.get("time"))
+    except Exception as e:
+        log.warning("userTrades %s 取开仓时间失败: %s", symbol, e)
+    return None
+
+
 # ---------- 主流程 ----------
 def run_once():
     state = json.loads(STATE.read_text()) if STATE.exists() else {
@@ -179,9 +219,11 @@ def run_once():
         if abs(amt) > 1e-9:
             actual[p["symbol"]] = amt
             cur = state["positions"].get(p["symbol"], {})
+            if not cur.get("entry_time"):
+                # 从币安真实成交取开仓时间（北京时间），取不到再用当前北京时间兜底
+                cur["entry_time"] = fetch_entry_time(p["symbol"], amt) or bj_now()
             cur.update(side="long" if amt > 0 else "short",
                        entry_price=float(p.get("entryPrice", 0)),
-                       entry_time=cur.get("entry_time", time.strftime("%Y-%m-%d %H:%M")),
                        qty=abs(amt), candle=cur.get("candle"))
             state["positions"][p["symbol"]] = cur
     # 币安已无持仓但本地还记着 -> 视为已平仓（外部平）
@@ -242,7 +284,7 @@ def run_once():
                         continue
                 ep = rec.get("entry_price") or row["close"]
                 pnl = (row["close"] - ep) * abs(amt) if side == "long" else (ep - row["close"]) * abs(amt)
-                state["trades"].append({**rec, "exit_time": time.strftime("%Y-%m-%d %H:%M"),
+                state["trades"].append({**rec, "exit_time": bj_ms(candle_id),
                                         "exit_price": float(row["close"]), "pnl": round(pnl, 4),
                                         "exit_reason": reason})
                 state["positions"].pop(sym, None)
@@ -277,7 +319,7 @@ def run_once():
                 set_margin_and_leverage(sym)
                 order(sym, "BUY" if side == "long" else "SELL", qty, False)
                 state["positions"][sym] = {"side": side, "entry_price": float(row["close"]),
-                                           "entry_time": time.strftime("%Y-%m-%d %H:%M"),
+                                           "entry_time": bj_ms(candle_id),
                                            "qty": qty, "reason": reason, "candle": candle_id}
                 current_pos += 1
                 candidates.append((sym, side, row["close"], reason, "已下单"))
@@ -285,7 +327,7 @@ def run_once():
                 log.warning("开仓 %s 失败: %s", sym, e)
                 candidates.append((sym, side, row["close"], reason, "下单失败"))
 
-    state["scan"] = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "scanned": scanned,
+    state["scan"] = {"time": bj_now(sec=True), "scanned": scanned,
                      "anomalies": anomalies, "positions": current_pos}
     STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2))
     write_monitor(state, candidates)
