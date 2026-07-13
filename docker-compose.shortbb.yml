@@ -1,0 +1,26 @@
+# ShortBB 模拟交易执行器 —— 云服务器常驻服务
+#
+# 用法：
+#   1) cp .env.example .env        # 然后编辑 .env 填入真实测试网密钥
+#   2) docker compose -f docker-compose.shortbb.yml up -d
+#   3) docker compose -f docker-compose.shortbb.yml logs -f   # 看实时日志
+#   4) 监控页在宿主机：user_data/shortbb_monitor.html
+#
+# 说明：
+#   - restart: unless-stopped  → 云机重启/进程崩溃会自动拉起
+#   - 执行器自己每次扫描直接拉币安测试网最新已收盘1h K线，不依赖本地数据
+#   - 同一测试网账户只能跑一个实例！上云前先停掉本地那个后台任务
+services:
+  shortbb:
+    image: freqtradeorg/freqtrade:stable
+    container_name: shortbb
+    dns:
+      - "8.8.8.8"
+      - "1.1.1.1"
+    volumes:
+      - "./user_data:/freqtrade/user_data"
+    env_file:
+      - .env
+    restart: unless-stopped
+    entrypoint: ["python"]
+    command: ["/freqtrade/user_data/shortbb_live_runner.py"]

@@ -1,0 +1,16 @@
+# 密钥与日志不进版本库
+.env
+run_once.log
+run_live.log
+live_loop.log
+__pycache__/
+*.pyc
+
+# 本地历史K线数据（云上执行器自己拉测试网，不需要）
+user_data/data/
+
+# 运行时生成的文件（云上会自动重建）
+user_data/logs/
+user_data/shortbb_monitor.html
+user_data/shortbb_live_state.json
+*.sqlite
