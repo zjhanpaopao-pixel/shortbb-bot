@@ -25,15 +25,16 @@ if command -v docker >/dev/null 2>&1; then
   echo "[1/4] Docker 已安装，跳过。"
 else
   echo "[1/4] 正在安装 Docker（约 1-2 分钟，请稍候）..."
-  curl -fsSL https://get.docker.com | $SUDO sh
-  $SUDO systemctl enable --now docker 2>/dev/null || true
-  # 确保 docker compose 插件可用（部分系统需单独装）
-  if ! $SUDO docker compose version >/dev/null 2>&1; then
-    echo "      docker compose 插件缺失，尝试安装..."
-    $SUDO apt-get update >/dev/null 2>&1 && $SUDO apt-get install -y docker-compose-plugin >/dev/null 2>&1 \
-      || $SUDO yum install -y docker-compose-plugin >/dev/null 2>&1 \
-      || echo "      自动安装失败，请手动装 docker compose 插件后重跑本脚本。"
+  # 优先 apt（阿里云等国内机器 snap/get.docker.com 常被挡，apt 走厂商镜像源最快）
+  if command -v apt-get >/dev/null 2>&1; then
+    $SUDO apt-get update
+    $SUDO apt-get install -y docker.io docker-compose-plugin
+  elif command -v snap >/dev/null 2>&1; then
+    $SUDO snap install docker
+  else
+    curl -fsSL https://get.docker.com | $SUDO sh
   fi
+  $SUDO systemctl enable --now docker 2>/dev/null || true
   echo "      Docker 安装完成。"
 fi
 
