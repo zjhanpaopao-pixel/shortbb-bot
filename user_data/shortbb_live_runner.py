@@ -394,6 +394,24 @@ th{{background:#f3f3f3}} .dry{{color:#c33;font-weight:bold}}
     MONITOR.write_text(html_doc, encoding="utf-8")
 
 
+def sleep_to_next_candle(interval_minutes=60):
+    """睡到下一根 K 线收盘附近再醒，避免空转刷 API。"""
+    try:
+        now = datetime.now(timezone(timedelta(hours=8)))
+        # 下一根 K 线收盘时间 = 当前小时向上取整到 interval 边界 + 2 分钟缓冲
+        mins = ((now.minute // interval_minutes) + 1) * interval_minutes
+        target = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=mins)
+        # 如果已经过了目标（极端情况），就等下一个周期
+        if target <= now:
+            target += timedelta(minutes=interval_minutes)
+        wait = max(10, int((target - now).total_seconds()))  # 至少 10 秒，防止死循环
+        log.info("本轮扫描完成，等待 %d 秒后进入下一根 K 线（目标 %.02s:%.02s 北京）",
+                 wait, target.strftime("%H:%M"))
+        time.sleep(wait)
+    except Exception:
+        time.sleep(60)  # 兜底：计算失败时回退到 1 分钟
+
+
 if __name__ == "__main__":
     log.info("ShortBB 执行器启动: testnet, 1h, DRY_RUN=%s, LOOP=%s", DRY_RUN, LOOP)
     if "--once" in sys.argv or not LOOP:
@@ -404,4 +422,4 @@ if __name__ == "__main__":
                 run_once()
             except Exception:
                 log.exception("整点循环异常，将重试")
-            time.sleep(60)
+            sleep_to_next_candle()
